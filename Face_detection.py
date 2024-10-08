@@ -3,7 +3,7 @@ import datetime
 import os
 
 
-harcascade = "Models/haar_casscade.xml"
+harcascade = "haar_casscade.xml"
 
 if not os.path.exists('Captured'):
     os.makedirs('Captured')
