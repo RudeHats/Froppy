@@ -1,42 +1,95 @@
 import cv2
-import datetime
+import numpy as np
+import tensorflow as tf
+import time
 import os
 
+# Load OpenCV's DNN face detector
+face_detector = cv2.dnn.readNetFromCaffe(
+    'models/deploy.prototxt.txt',  # Path to the deploy prototxt file
+    'models/res10_300x300_ssd_iter_140000_fp16.caffemodel'  # Pre-trained model file
+)
 
-harcascade = "haar_casscade.xml"
+# Load the MobileNetV2 model
+mobilenet_model = tf.keras.applications.MobileNetV2(weights='imagenet', include_top=False, input_shape=(224, 224, 3))
 
-if not os.path.exists('Captured'):
-    os.makedirs('Captured')
+# Preprocess input image for MobileNetV2 model
+def preprocess_image(image):
+    image_resized = cv2.resize(image, (224, 224))  # Resize to 224x224
+    image_preprocessed = tf.keras.applications.mobilenet_v2.preprocess_input(image_resized)
+    image_expanded = np.expand_dims(image_preprocessed, axis=0)
+    return image_expanded
 
-cap = cv2.VideoCapture(0)
+# Perform face detection using OpenCV's DNN module
+def detect_faces(image):
+    h, w = image.shape[:2]
+    # Convert image to blob for DNN face detection
+    blob = cv2.dnn.blobFromImage(cv2.resize(image, (300, 300)), 1.0, (300, 300), (104.0, 177.0, 123.0))
 
-cap.set(3, 2000) #width of the frame
-cap.set(4, 1500) #Height of the frame
+    face_detector.setInput(blob)
+    detections = face_detector.forward()
+
+    face_boxes = []
+    for i in range(detections.shape[2]):
+        confidence = detections[0, 0, i, 2]
+        if confidence > 0.5:  # Confidence threshold
+            box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
+            (startX, startY, endX, endY) = box.astype("int")
+            face_boxes.append((startX, startY, endX, endY))
+    return face_boxes
+
+# Ensure "captured" folder exists
+if not os.path.exists('captured'):
+    os.makedirs('captured')
+
+# Start webcam video stream
+video_stream = cv2.VideoCapture(0)
+
+# Capture frames every 5 seconds
+capture_interval = 2  # 5 seconds
+last_capture_time = time.time()
+
+image_count = 0
+
+# Set a frame skip interval
+frame_skip = 2  # Number of frames to skip
+frame_counter = 0  # Frame counter
 
 while True:
-    success, img = cap.read()
-
-    if not success:
+    ret, frame = video_stream.read()  # Capture frame-by-frame
+    if not ret:
+        print("Failed to grab frame")
         break
 
+    # Increment the frame counter
+    frame_counter += 1
 
-    facecascade = cv2.CascadeClassifier(harcascade)
-    img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # Skip processing for specified frames
+    if frame_counter % frame_skip != 0:
+        continue  # Skip the frame
 
+    # Detect faces in the current frame
+    faces = detect_faces(frame)
 
-    face = facecascade.detectMultiScale(img_gray, 1.1, 4)
+    # Draw bounding boxes around detected faces
+    for (startX, startY, endX, endY) in faces:
+        cv2.rectangle(frame, (startX, startY), (endX, endY), (0, 255, 0), 2)
 
-    for (x, y, w, h) in face:
-        cv2.rectangle(img, (x, y), (x+w, y+h), (0, 255, 0), 2)
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        filename = f"Captured/captured_face_{timestamp}.jpg"
-        
-        # Save the frame with the unique filename in the 'Captured' folder
-        cv2.imwrite(filename, img)
-        print(f"Face captured and saved as {filename}")
+    # Check if 5 seconds have passed since the last capture
+    if time.time() - last_capture_time > capture_interval:
+        if faces:  # Only save if at least one face is detected
+            # Save the entire frame as an image file inside the "captured" folder
+            cv2.imwrite(f"captured/captured_frame_{image_count}.jpg", frame)
+            image_count += 1
+            last_capture_time = time.time()  # Reset the capture timer
 
+    # Display the resulting frame
+    cv2.imshow("Webcam Face Detection", frame)
 
-    cv2.imshow("face", img)
-
-    if cv2.waitKey(1) & 0xFF == ord("q"):
+    # Press 'q' to quit the window
+    if cv2.waitKey(1) & 0xFF == ord('q'):
         break
+
+# Release the capture and close windows
+video_stream.release()
+cv2.destroyAllWindows()
